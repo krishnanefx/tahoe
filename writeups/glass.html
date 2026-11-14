@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tahoe Glass: bending light with an SVG filter · Tahoe</title>
+<meta name="description" content="An Obsidian plugin that gives the Tahoe theme&#x27;s floating surfaces real refraction, with colour split, glare and a pointer highlight, using SVG displacement maps instead of a shader.">
+<meta property="og:title" content="Tahoe Glass: bending light with an SVG filter · Tahoe">
+<meta property="og:description" content="An Obsidian plugin that gives the Tahoe theme&#x27;s floating surfaces real refraction, with colour split, glare and a pointer highlight, using SVG displacement maps instead of a shader.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner"><a class="brand" href="../index.html">Tahoe <span>for Obsidian</span></a>
+<nav><a href="../index.html#packages">Packages</a><a href="../index.html#writeups">Write-ups</a><a href="https://github.com/krishnanefx">GitHub</a></nav></div></header>
+<main class="wrap article">
+<h1>Tahoe Glass: bending light with an SVG filter</h1>
+<p>An Obsidian plugin that gives the Tahoe theme's floating surfaces real refraction, with colour split, glare and a pointer highlight, using SVG displacement maps instead of a shader.</p>
+<h2>The problem</h2>
+<p>Apple's Liquid Glass in macOS Tahoe doesn't just blur what's behind a panel. It bends it: content near the rim is squeezed and folded back on itself. CSS <code>backdrop-filter</code> can blur, tint and saturate, but it can't bend.</p>
+<h2>How the refraction is rendered</h2>
+<p>There is no WebGL and no shader. Chromium, which Obsidian runs on, accepts an SVG filter inside <code>backdrop-filter</code>, and that filter can use <code>feDisplacementMap</code>, which shifts each pixel by an amount read from an image. So the work is drawing the right image.</p>
+<p>For each glass surface, <code>LensHost.apply</code> (<code>src/main.js</code>) reads the element's size and its four computed corner radii, and <code>computeGlassMaps</code> draws two RGBA maps for exactly that shape. A signed distance field for a rounded rectangle (<code>roundedRectSdf</code>) gives each pixel its distance from the edge and the outward normal. Inside the edge band, red and green encode a shift inward along that normal; everywhere else they stay at 128, which means "straight through".</p>
+<p>How far to shift comes from <code>edgeBend</code>, which follows Liquid Glass Studio by Charles Yin (MIT, credited in <code>THIRD_PARTY_NOTICES.md</code>). At a point <code>u</code> across the band, the surface meets the eye at <code>asin((1 − u)²)</code>, the ray refracts into glass of index 1.4 by Snell's law, and the content it lands on is shifted by <code>tan(θi − θt)</code>. <code>lensSpec</code> sizes it: the band is about 20px (scaled by the Strength setting, at least 6px, at most 45% of the short side), the reach is 3.5× the band, and the reach is capped at 120px, because past that an 8-bit map shows visible steps.</p>
+<p>The backdrop is never captured by the plugin: <code>backdrop-filter</code> hands the filter what's behind the element as <code>SourceGraphic</code>. The plugin only builds the <code>&lt;filter&gt;</code> (<code>buildFilter</code>), puts it in a hidden <code>&lt;svg&gt;</code> in the page, and sets <code>--tahoe-lens: url(#tahoe-lens-N)</code> on the element.</p>
+<p><img alt="Square, capsule and round lenses over red, yellow and blue stripes, and rounded panels over text: the stripes and letters bend and fold back at each rim" src="../images/glass-glass-lens-test.png" /></p>
+<h2>Dispersion and glare</h2>
+<p>Dispersion runs the displacement three times, at 1.14×, 1× and 0.86× of the base scale. Each pass keeps one colour channel through an <code>feColorMatrix</code>, and two arithmetic <code>feComposite</code> steps add them back up, so red bends a little further than green and blue a little less.</p>
+<p>The second map, the light map, carries three signals in its channels. Red is glare, strongest where the edge's normal faces a light at the top left (−45°), with a weaker lobe on the opposite side. Green is a thin Fresnel rim all the way round, which fades out by about 6px in (<code>rimLight</code>). Blue marks the edge band, which the filter uses to confine a 1.1px blur to the band only, because <code>feDisplacementMap</code> doesn't interpolate and the fold would look jagged; the middle stays sharp. Glare isn't plain white: it brightens and saturates the bent content itself (<code>feComponentTransfer</code>, then <code>saturate</code> 1.9), so it picks up the colour behind the glass.</p>
+<p>The pointer highlight isn't in the filter: <code>onPointerMove</code> sets <code>--tahoe-mx</code>, <code>--tahoe-my</code> and <code>--tahoe-glow</code> at most once a frame, and the theme draws a radial gradient there.</p>
+<h2>Keeping it fast</h2>
+<p>The full filter has 19 primitives, each working on a full-size copy of the surface. What keeps that in check:</p>
+<ul>
+<li><strong>Off the main thread.</strong> The map pixel loops and PNG encoding run in a worker built from the functions' own source text (<code>WORKER_SOURCE</code>, <code>OffscreenCanvas.convertToBlob</code>). <code>MapMaker</code> pre-decodes the PNGs and falls back to the main thread if the worker fails.</li>
+<li><strong>Reuse.</strong> Map sizes over 64px are rounded up to the next 8px and stretched to fit, so a slightly taller menu reuses one. Up to 40 idle filters and 24 idle maps are kept for menus that reopen.</li>
+<li><strong>Lighter tiers.</strong> Surfaces 64px or less on their short side (toolbar buttons, the status bar) sit over scrolling notes and redraw every frame, so with <em>Lighter glass on the toolbar</em> they get a 4-step filter: the bend plus a rim light pre-drawn into the map.</li>
+<li><strong>Animations.</strong> While a menu or the palette springs open, <code>apply</code> attaches a quick filter (bend plus rim) and swaps in the full one on <code>animationend</code>. Resizes of surfaces that already have glass wait 70ms to settle.</li>
+<li><strong>Battery saver.</strong> <code>watchPower</code> watches <code>navigator.getBattery()</code> for charging changes and runs <code>/usr/bin/pmset -g</code> once a minute to read low power mode. While saving (on battery, in low power mode, or set to <em>Always</em>), every surface gets the lite tier, without dispersion or coloured glare, and the pointer highlight stops updating.</li>
+</ul>
+<h2>Working with the theme</h2>
+<p>The plugin draws no glass itself; the theme owns the material, and <code>--tahoe-lens</code> is one slot in its chain: <code>blur(...) var(--tahoe-lens,) saturate(...)</code>. Without the plugin the variable is empty and the theme falls back to frosted glass. The blur runs before the lens, so the bend itself is never blurred away.</p>
+<p>With Refraction on, the plugin adds <code>tahoe-refraction</code> to the body and the theme switches to clear glass: the blur and tint scale with the square of <code>--tahoe-glass-level</code>, so most of the <em>Glass level</em> slider stays clear. On <code>css-change</code> every lens is rebuilt, since light and dark maps differ.</p>
+<p>Tahoe Glass is desktop only, made on macOS, and not yet in the Obsidian community plugin directory.</p>
+<p class="more">More write-ups: <a href="run.html">A notebook inside a note</a> · <a href="intelligence.html">AI that stays on the Mac</a> · <a href="release.html">Shipping seven packages</a></p>
+</main>
+<footer><div class="wrap">
+<p>Made by Krishnan Adaikkappan. Every package is MIT-licensed and open source on <a href="https://github.com/krishnanefx">GitHub</a>.</p>
+<p>Tahoe isn't affiliated with, or endorsed by, Apple or Obsidian.</p>
+</div></footer>
+</body>
+</html>

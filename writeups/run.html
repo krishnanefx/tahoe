@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tahoe Run: code blocks that run inside the note · Tahoe</title>
+<meta name="description" content="An Obsidian plugin that runs a note&#x27;s code blocks in place, with a Python session per note, a debugger, Python on iPhone and iPad through Pyodide, and a test suite that drives the real kernel and real compilers.">
+<meta property="og:title" content="Tahoe Run: code blocks that run inside the note · Tahoe">
+<meta property="og:description" content="An Obsidian plugin that runs a note&#x27;s code blocks in place, with a Python session per note, a debugger, Python on iPhone and iPad through Pyodide, and a test suite that drives the real kernel and real compilers.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner"><a class="brand" href="../index.html">Tahoe <span>for Obsidian</span></a>
+<nav><a href="../index.html#packages">Packages</a><a href="../index.html#writeups">Write-ups</a><a href="https://github.com/krishnanefx">GitHub</a></nav></div></header>
+<main class="wrap article">
+<h1>Tahoe Run: code blocks that run inside the note</h1>
+<p>An Obsidian plugin that runs a note's code blocks in place, with a Python session per note, a debugger, Python on iPhone and iPad through Pyodide, and a test suite that drives the real kernel and real compilers.</p>
+<p><img alt="A Python block in a note with its printed output and a matplotlib plot underneath" src="../images/run-run.png" /></p>
+<h2>What it does</h2>
+<p><code>run()</code> in <code>src/main.js</code> sends Python to a long-lived kernel for the note and MATLAB to a long-lived MATLAB session. Everything else (C, C++, Swift and the rest) is written to a fresh temp folder, compiled if needed, and run with the user's own tools.</p>
+<h2>1. A kernel that shares pipes with the code it runs</h2>
+<p>A note's kernel is a child process running <code>src/kernel.py</code>, driven from <code>src/kernel.js</code>. The cell's output has to stay intact, including C extensions and subprocesses writing straight to fds 1 and 2, while plugin and kernel exchange structured messages.</p>
+<p>The solution is a fourth pipe. <code>kernel.js</code> spawns the process with <code>stdio: ["pipe", "pipe", "pipe", "pipe"]</code>. Commands go in as JSON lines on stdin, and <code>kernel.py</code> sends replies on <code>os.fdopen(3, "w", buffering=1)</code>, leaving fds 1 and 2 to the cell. But a <code>done</code> reply on fd 3 can arrive before the last bytes of stdout, so <code>execute()</code> writes a marker framed by U+001E (<code>\x1eTAHOE-DONE:&lt;id&gt;\x1e</code>) to both stdout and stderr, and <code>maybeFinish()</code> in <code>kernel.js</code> only finishes the cell once it has the reply and both markers. If a cell redirected a stream and a marker never comes, a 250 ms grace timer finishes it anyway.</p>
+<p><code>run_cell()</code> compiles each block as <code>&lt;cell N&gt;</code> and registers it in <code>linecache</code>, so tracebacks quote the block's lines. Interrupt sends SIGINT; if the cell is still busy 3 seconds later, the kernel is killed with SIGKILL.</p>
+<p>Completions come from jedi. With a kernel running, <code>complete()</code> in <code>kernel.py</code> calls <code>jedi.Interpreter</code> on the live namespace. With none, <code>src/completer.js</code> starts <code>completer.py</code>, which runs <code>jedi.Script</code> over the note's code without executing it, in the note's own environment.</p>
+<h2>2. A debugger with no extra dependencies</h2>
+<p><img alt="A Python block with a breakpoint set inside a loop" src="../images/run-debugger-demo.png" /></p>
+<p>The debugger had to work in any Python environment without installing anything into it, so it is built on the standard library's <code>bdb</code>: <code>class Debugger(bdb.Bdb)</code> in <code>kernel.py</code>.</p>
+<p>Breakpoints live in a CodeMirror <code>StateField</code> in <code>src/debug.js</code>, so they move with edits. <code>breakpointsFor()</code> sends them with the run as <code>[{code, lines, current}]</code>, one entry per block. Because the kernel keeps every cell's source in <code>CELL_SOURCES</code>, a breakpoint in an earlier block is matched to the most recent <code>&lt;cell N&gt;</code> with that exact code, so a breakpoint inside a function defined in an earlier block still fires when a later block calls it.</p>
+<p>Tracing is only switched on for cells that have breakpoints: <code>start_debugger()</code> calls <code>sys.settrace(debugger.trace_dispatch)</code> in run-until-breakpoint mode, and <code>run_cell()</code> clears it when the cell ends. In <code>user_line</code>, frames that are not from a <code>&lt;cell …&gt;</code> file get <code>set_return</code>, so library code is stepped over. When paused, <code>interaction()</code> sends a <code>paused</code> message with the line and stack, then blocks on stdin, answering <code>inspect</code>, <code>complete</code>, <code>variables</code> and <code>table</code> requests against the paused frame's globals and locals until a <code>debug</code> command arrives.</p>
+<h2>3. Python on iPhone and iPad</h2>
+<p>Obsidian's mobile app has no Node, so <code>src/node.js</code> only loads Node modules when <code>Platform.isDesktop</code> is true. On a phone, Python runs in Pyodide inside Obsidian (<code>src/pyodide.js</code>), pinned to version <code>314.0.7</code>.</p>
+<p>Nothing is bundled. The five core files are downloaded from jsDelivr on request, and <code>PyodideStore.fetch()</code> refuses to keep any file whose SHA-256 does not match. Core files are checked against <code>CORE_SHA256</code>, packages against the <code>sha256</code> listed in <code>pyodide-lock.json</code>. Pinning the lock file's own hash is what makes the package checks trustworthy, since their checksums come from it.</p>
+<p>Pyodide is told its files live at <code>https://tahoe-pyodide.invalid/</code>, and <code>serve()</code> wraps <code>window.fetch</code> to answer that address from local storage, downloading and verifying a missing package the first time a block imports it.</p>
+<p>The phone did not get a second kernel. <code>kernel.py</code> is split so that <code>run_cell()</code> takes a namespace and never touches the pipes; Pyodide loads the same file as a module, and each note gets its own namespace dict in one shared runtime. The cost: cells run on Obsidian's own thread, so a running block can't be stopped, and there is no debugger, since the pause loop waits on stdin.</p>
+<h2>4. Testing against real processes</h2>
+<p>Three suites live in <code>tests/</code>:</p>
+<ul>
+<li><strong>Unit</strong> (<code>tests/unit/run.test.cjs</code>, 158 tests, and <code>rich.test.cjs</code>, 9): real sources with stand-ins for Obsidian and the vault. Six cover Pyodide, including rejecting a file with the wrong checksum.</li>
+<li><strong>Kernel</strong> (<code>tests/kernel/</code>, 79 tests across <code>test_kernel.py</code> and <code>test_rich.py</code>): drive <code>kernel.py</code> over its real pipes, including stepping into a function defined in an earlier cell.</li>
+<li><strong>Runners</strong> (<code>tests/runners/runners.test.cjs</code>, 50 tests): real programs through the plugin's runner. C++ blocks compile with <code>clang++ -std=c++20 -I {dir}</code>, and a <code>bits/stdc++.h</code> shim (<code>src/stdcpp.h</code>) is written into that folder because Apple's clang doesn't ship it. Others check that C, C++ and Swift compile errors link to the block's line, and that Stop ends a C program ignoring SIGTERM (<code>kill()</code> follows up with SIGKILL after 1.5 seconds). Languages without installed tools are skipped; on the Mac used here, 39 passed and 11 were skipped.</li>
+</ul>
+<p>MATLAB is tested only against a stand-in process, and Pyodide is not tested end to end. Tahoe Run has been used on macOS only.</p>
+<p class="more">More write-ups: <a href="glass.html">Refraction in CSS and SVG</a> · <a href="intelligence.html">AI that stays on the Mac</a> · <a href="release.html">Shipping seven packages</a></p>
+</main>
+<footer><div class="wrap">
+<p>Made by Krishnan Adaikkappan. Every package is MIT-licensed and open source on <a href="https://github.com/krishnanefx">GitHub</a>.</p>
+<p>Tahoe isn't affiliated with, or endorsed by, Apple or Obsidian.</p>
+</div></footer>
+</body>
+</html>

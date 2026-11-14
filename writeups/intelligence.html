@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tahoe Intelligence: on-device AI for an Obsidian vault · Tahoe</title>
+<meta name="description" content="An Obsidian plugin that answers questions from your notes with citations, finds related notes and duplicate ideas, and helps with writing, using Apple&#x27;s on-device model or a local Ollama model.">
+<meta property="og:title" content="Tahoe Intelligence: on-device AI for an Obsidian vault · Tahoe">
+<meta property="og:description" content="An Obsidian plugin that answers questions from your notes with citations, finds related notes and duplicate ideas, and helps with writing, using Apple&#x27;s on-device model or a local Ollama model.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner"><a class="brand" href="../index.html">Tahoe <span>for Obsidian</span></a>
+<nav><a href="../index.html#packages">Packages</a><a href="../index.html#writeups">Write-ups</a><a href="https://github.com/krishnanefx">GitHub</a></nav></div></header>
+<main class="wrap article">
+<h1>Tahoe Intelligence: on-device AI for an Obsidian vault</h1>
+<p>An Obsidian plugin that answers questions from your notes with citations, finds related notes and duplicate ideas, and helps with writing, using Apple's on-device model or a local Ollama model.</p>
+<p><img alt="Proofread in Tahoe Intelligence: a short note with three changes marked, and Copy, Insert below and Replace buttons" src="../images/intelligence-demo.png" /></p>
+<h2>The problem</h2>
+<p>Apple's on-device model is free and private, but it is reachable only from Swift, its context window is small, and an Obsidian plugin is JavaScript running in Electron. Most of the work went into bridging those three facts.</p>
+<h2>Talking to Apple Intelligence: a Swift helper</h2>
+<p>The plugin ships the Swift source of a helper inside its bundle (<code>src/helper.swift</code>, imported as a string in <code>src/engine.js</code>). On first use, <code>Engine.compileHelper</code> checks for Xcode's command line tools with <code>xcode-select -p</code>, so a missing install never triggers a system prompt. If they are there, it writes the source to <code>~/Library/Caches/tahoe-intelligence/</code> and builds it with <code>xcrun --sdk macosx swiftc -O</code>. The binary name includes <code>HELPER_VERSION</code>, so a new helper is rebuilt.</p>
+<p><code>Engine.start</code> spawns the binary once and keeps it running. The protocol is JSON lines over stdin and stdout. Each request carries an <code>id</code>, and the helper's <code>handle</code> function dispatches on <code>op</code>: <code>status</code>, <code>generate</code>, <code>embed</code>, <code>image</code>, <code>cancel</code>, plus Reminders and Calendar ops that are off by default. Inside, <code>generate</code> uses the Foundation Models framework (<code>SystemLanguageModel.default</code>, <code>LanguageModelSession</code>). Streamed output is sent as <code>delta</code> messages, or as a <code>reset</code> when a new snapshot doesn't extend the previous one. Structured output works by turning a small JSON schema spec into a <code>DynamicGenerationSchema</code> (<code>buildSchema</code>).</p>
+<p>The model handles one request at a time, so <code>Engine.serial</code> chains every <code>generate</code> call onto a single promise queue.</p>
+<h2>Ollama as a fallback</h2>
+<p><code>Engine.provider</code> picks Apple Intelligence unless the setting says Ollama or Apple's model is unavailable. Then it asks Ollama for its models at <code>127.0.0.1:11434/api/tags</code> and picks the one closest to 5 GB unless you've chosen one. <code>generateOllama</code> posts to <code>/api/chat</code> and parses the streamed NDJSON. <code>toJsonSchema</code> turns the same schema spec into JSON Schema for Ollama's <code>format</code> field, so features that rely on structured output work with either engine. Ollama is only used for text generation. Embeddings always come from the Mac, so the search features need macOS.</p>
+<h2>Embeddings and the meaning index</h2>
+<p>The helper's <code>embed</code> op uses <code>NLContextualEmbedding</code> for English. It splits text into chunks of up to 900 characters (<code>chunks</code>), embeds at most 24 of them, mean-pools every token vector into one vector, and returns the vectors as base64 Float32.</p>
+<p><code>SemanticIndex</code> in <code>src/index.js</code> keeps one vector per note, embedding the title plus plain text (<code>plainText</code> in <code>src/vault.js</code> strips front matter, code blocks and embeds). It skips notes under 40 characters and excluded folders. Raw embeddings made every note look alike, so <code>build()</code> subtracts the vault's mean vector and normalises before cosine comparison.</p>
+<p>Storage is two files per vault in <code>~/Library/Caches/tahoe-intelligence</code>: <code>index-&lt;hash&gt;.bin</code> (vectors back to back) and <code>.meta.json</code> (paths, mtimes, dimension). <code>save()</code> writes <code>.tmp</code> files and renames them into place, so a crash can't leave half an index. Saves happen at most once a minute, and on quit.</p>
+<p>Updates are incremental. On startup, <code>scan()</code> queues only notes whose mtime differs from the stored one. Edits are debounced by 5 seconds (<code>enqueueSoon</code>), then embedded in batches of 8 with a 30 ms pause between batches. Renames move the stored vector instead of re-embedding.</p>
+<p>Meaning alone handles short notes and formulas badly, so <code>src/keywords.js</code> adds a tf-idf <code>KeywordIndex</code>. <code>hybridRelated</code> blends the two half and half for Related notes. <code>isHub</code> leaves out daily notes, weekly reviews and maps, since they relate to everything.</p>
+<h2>Ask your notes, with citations</h2>
+<p><code>retrieve</code> in <code>src/features/ask.js</code> has four steps:</p>
+<ol>
+<li>Ask the model for a short sample answer, and embed the question plus that answer, since a sample answer finds better matches than a bare question.</li>
+<li>Take the 10 nearest notes by meaning, plus up to 8 notes that share the question's rarer words.</li>
+<li>Split those notes into passages of about 650 characters, embed them in batches of 16 (cached by hash), and score them: 0.55 passage meaning, 0.2 note score, 0.12 word overlap, 0.15 title match.</li>
+<li>Keep the top 6 passages, at most 2 per note, so answers draw on several notes.</li>
+</ol>
+<p>The passages go to the model as numbered sources, with instructions to use only them and cite <code>[1]</code>, <code>[2]</code>. <code>renderAnswer</code> replaces each number with a <code>[[note|1]]</code> wiki link. Numbers that match no source are dropped.</p>
+<h2>Small context windows</h2>
+<p>The comment in <code>engine.js</code> puts the on-device model at about 4,000 tokens, prompt and answer together, so <code>INPUT_CHAR_BUDGET</code> is 7,000 characters. <code>clip()</code> keeps the first 80% of the budget and the last 15% of the text. Features set smaller limits, such as 2,200 characters per note when comparing duplicates and 6,200 for the Ask prompt. Weekly review and maps of content read one note per call into a one-line summary, then write from the summaries. If the window still overflows, the helper maps <code>exceededContextWindowSize</code> to a <code>context</code> code and the UI suggests a shorter selection.</p>
+<h2>Where the network is used</h2>
+<p>The JavaScript loads Node's <code>http</code> module, not <code>https</code>. The only requests in the source are the two in <code>engine.js</code>, both to <code>127.0.0.1:11434</code>. Generation and embedding run in a local process on the Mac. The helper and index stay in <code>~/Library/Caches</code>, which isn't synced.</p>
+<p class="more">More write-ups: <a href="run.html">A notebook inside a note</a> · <a href="glass.html">Refraction in CSS and SVG</a> · <a href="release.html">Shipping seven packages</a></p>
+</main>
+<footer><div class="wrap">
+<p>Made by Krishnan Adaikkappan. Every package is MIT-licensed and open source on <a href="https://github.com/krishnanefx">GitHub</a>.</p>
+<p>Tahoe isn't affiliated with, or endorsed by, Apple or Obsidian.</p>
+</div></footer>
+</body>
+</html>

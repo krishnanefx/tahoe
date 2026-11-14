@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shipping seven packages from one repository · Tahoe</title>
+<meta name="description" content="One private monorepo is the source; seven public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
+<meta property="og:title" content="Shipping seven packages from one repository · Tahoe">
+<meta property="og:description" content="One private monorepo is the source; seven public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="bar"><div class="bar-inner"><a class="brand" href="../index.html">Tahoe <span>for Obsidian</span></a>
+<nav><a href="../index.html#packages">Packages</a><a href="../index.html#writeups">Write-ups</a><a href="https://github.com/krishnanefx">GitHub</a></nav></div></header>
+<main class="wrap article">
+<h1>Shipping seven packages from one repository</h1>
+<p>One private monorepo is the source; seven public repositories get exactly what Obsidian's directory needs, built in the open and signed by GitHub.</p>
+<h2>One source, seven public repositories</h2>
+<p>All of Tahoe lives in one repository: the theme, the six plugins, a shared build, and the tests. Each package that's public has its own repository as well (<code>obsidian-tahoe-run</code>, <code>-math</code>, <code>-code</code> and so on), because Obsidian's community directory installs from one repository per package.</p>
+<p><code>publish/sync.sh</code> copies a package across. For a plugin built from <code>src/</code> it mirrors the sources with <code>rsync --delete</code>, takes the package's own tests along, copies <code>manifest.json</code>, and records the release in <code>versions.json</code>, which maps each version to the oldest Obsidian it supports. The public repository never gets edited by hand, so the two can't drift.</p>
+<p>Some code is only for my own vault. It's marked in the source with <code>// @private</code> on a line, or between <code>@private-start</code> and <code>@private-end</code> for a block, in JavaScript and CSS alike. The sync strips those markers' contents, then searches the public copy for the feature's name and fails if any trace is left. A leak would need the marker and that final check to both go wrong.</p>
+<h2>Releases anyone can verify</h2>
+<p>Every public repository has the same release workflow. Pushing a tag:</p>
+<ol>
+<li>checks that the tag matches <code>version</code> in <code>manifest.json</code>, and stops if it doesn't;</li>
+<li>installs with <code>npm ci</code> and builds <code>main.js</code> on GitHub's runner;</li>
+<li>attests <code>main.js</code>, <code>manifest.json</code> and <code>styles.css</code> with <code>actions/attest</code>, so anyone can run <code>gh attestation verify main.js --repo krishnanefx/obsidian-tahoe-math</code> and confirm the file was built by that workflow from that commit;</li>
+<li>creates a draft release whose notes are the annotated tag's message.</li>
+</ol>
+<p>Nothing is published straight from CI. Before a draft goes live, the release script checks that every file has an attestation and that the <code>main.js</code> GitHub built is byte-for-byte the same as a local build of the same commit. If either check fails, the release stays a draft.</p>
+<p>Tahoe Run's Python on iPhone and iPad downloads Pyodide at first use. The SHA-256 of each of Pyodide's core files is pinned in the plugin (<code>CORE_SHA256</code> in <code>src/pyodide.js</code>). Packages are checked against the hashes in Pyodide's lock file. A download that doesn't match isn't kept.</p>
+<h2>A release queue with gates</h2>
+<p>Finished work doesn't go out in one push. Commits wait on a local <code>queue</code> branch in each public repository, and <code>publish/queue/queue.tsv</code> lists them in order with the date each is due and the tag, if it's a release. A scheduled task runs <code>push-next.sh</code> each morning, which for each due commit:</p>
+<ul>
+<li>replays it onto <code>main</code>;</li>
+<li>builds it and runs the package's tests, and stops if anything fails;</li>
+<li>pushes it, and for a tagged line pushes the tag, waits for the release workflow, runs the checks above and publishes the release;</li>
+<li>moves the line to <code>pushed.tsv</code>.</li>
+</ul>
+<p>If any step fails, nothing is pushed and the line stays where it is for the next run. Each release reaches users on its own, with its own notes, and a broken commit can't slip out behind a good one.</p>
+<h2>Tests</h2>
+<p><code>tests/run.sh</code> runs every suite, and exits non-zero if any fails. On the last run, 305 tests passed:</p>
+<table>
+<thead>
+<tr>
+<th>Suite</th>
+<th>Tests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Plugins' logic (Code's lexer and quick fixes, Math, arXiv and DOI links, the semantic index)</td>
+<td>20</td>
+</tr>
+<tr>
+<td>Tahoe Run: unit and rich output</td>
+<td>167</td>
+</tr>
+<tr>
+<td>Tahoe Run: real programs in each installed language</td>
+<td>39 (11 more skip when a language isn't installed)</td>
+</tr>
+<tr>
+<td>Tahoe Run: the Python kernel</td>
+<td>79</td>
+</tr>
+</tbody>
+</table>
+<p>The unit suites run in plain Node, with stand-ins for Obsidian and CodeMirror. With <code>--obsidian</code>, the script also drives a hidden copy of Obsidian over the Chrome DevTools Protocol. The copy has its own settings folder and a fresh vault, and it never takes focus. The scenarios check that the plugins load cleanly, that Python runs, that suggestions and quick fixes appear, that the debugger and variables view work, and that export to Jupyter works. <code>perf.py</code> uses the same copy to measure idle CPU, time per keystroke and scrolling frame times, with each plugin turned off in turn, so a slowdown can be traced to one package.</p>
+<p>Before a release, each public repository is also linted with <code>eslint-plugin-obsidianmd</code>, the checks Obsidian's automated review runs.</p>
+<p class="more">More write-ups: <a href="run.html">A notebook inside a note</a> · <a href="glass.html">Refraction in CSS and SVG</a> · <a href="intelligence.html">AI that stays on the Mac</a></p>
+</main>
+<footer><div class="wrap">
+<p>Made by Krishnan Adaikkappan. Every package is MIT-licensed and open source on <a href="https://github.com/krishnanefx">GitHub</a>.</p>
+<p>Tahoe isn't affiliated with, or endorsed by, Apple or Obsidian.</p>
+</div></footer>
+</body>
+</html>
