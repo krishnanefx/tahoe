@@ -7,10 +7,15 @@
   try {
     const r = await fetch("https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json");
     const stats = await r.json();
+    // A plugin missing from that file (Tahoe OCR, listed only in the new directory)
+    // keeps the number baked into the page, and still counts in the total.
     let total = 0;
     for (const el of document.querySelectorAll("[data-plugin]")) {
       const n = stats[el.dataset.plugin]?.downloads;
-      if (n == null) continue;
+      if (n == null) {
+        if (el.dataset.baked) total += Number(el.dataset.baked);
+        continue;
+      }
       total += n;
       el.textContent = `${fmt(n)} downloads`;
     }
