@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shipping seven packages from one repository · Tahoe</title>
-<meta name="description" content="One private monorepo is the source; seven public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
-<meta property="og:title" content="Shipping seven packages from one repository · Tahoe">
-<meta property="og:description" content="One private monorepo is the source; seven public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
+<title>Shipping nine packages from one repository · Tahoe</title>
+<meta name="description" content="One private monorepo is the source; nine public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
+<meta property="og:title" content="Shipping nine packages from one repository · Tahoe">
+<meta property="og:description" content="One private monorepo is the source; nine public repositories get exactly what Obsidian&#x27;s directory needs, built in the open and signed by GitHub.">
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
 <header class="bar"><div class="bar-inner"><a class="brand" href="../index.html">Tahoe <span>for Obsidian</span></a>
 <nav><a href="../index.html#packages">Packages</a><a href="../index.html#writeups">Write-ups</a><a href="https://github.com/krishnanefx">GitHub</a></nav></div></header>
 <main class="wrap article">
-<h1>Shipping seven packages from one repository</h1>
-<p>One private monorepo is the source; seven public repositories get exactly what Obsidian's directory needs, built in the open and signed by GitHub.</p>
-<h2>One source, seven public repositories</h2>
-<p>All of Tahoe lives in one repository: the theme, the six plugins, a shared build, and the tests. Each package that's public has its own repository as well (<code>obsidian-tahoe-run</code>, <code>-math</code>, <code>-code</code> and so on), because Obsidian's community directory installs from one repository per package.</p>
+<h1>Shipping nine packages from one repository</h1>
+<p>One private monorepo is the source; nine public repositories get exactly what Obsidian's directory needs, built in the open and signed by GitHub.</p>
+<h2>One source, nine public repositories</h2>
+<p>All of Tahoe lives in one repository: the theme, the eight plugins, a shared build, and the tests. Each package that's public has its own repository as well (<code>obsidian-tahoe-run</code>, <code>-math</code>, <code>-code</code> and so on), because Obsidian's community directory installs from one repository per package.</p>
 <p><code>publish/sync.sh</code> copies a package across. For a plugin built from <code>src/</code> it mirrors the sources with <code>rsync --delete</code>, takes the package's own tests along, copies <code>manifest.json</code>, and records the release in <code>versions.json</code>, which maps each version to the oldest Obsidian it supports. The public repository never gets edited by hand, so the two can't drift.</p>
 <p>Some code is only for my own vault. It's marked in the source with <code>// @private</code> on a line, or between <code>@private-start</code> and <code>@private-end</code> for a block, in JavaScript and CSS alike. The sync strips those markers' contents, then searches the public copy for the feature's name and fails if any trace is left. A leak would need the marker and that final check to both go wrong.</p>
 <h2>Releases anyone can verify</h2>

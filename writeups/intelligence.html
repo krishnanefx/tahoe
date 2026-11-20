@@ -43,7 +43,7 @@
 <p>The comment in <code>engine.js</code> puts the on-device model at about 4,000 tokens, prompt and answer together, so <code>INPUT_CHAR_BUDGET</code> is 7,000 characters. <code>clip()</code> keeps the first 80% of the budget and the last 15% of the text. Features set smaller limits, such as 2,200 characters per note when comparing duplicates and 6,200 for the Ask prompt. Weekly review and maps of content read one note per call into a one-line summary, then write from the summaries. If the window still overflows, the helper maps <code>exceededContextWindowSize</code> to a <code>context</code> code and the UI suggests a shorter selection.</p>
 <h2>Where the network is used</h2>
 <p>The JavaScript loads Node's <code>http</code> module, not <code>https</code>. The only requests in the source are the two in <code>engine.js</code>, both to <code>127.0.0.1:11434</code>. Generation and embedding run in a local process on the Mac. The helper and index stay in <code>~/Library/Caches</code>, which isn't synced.</p>
-<p class="more">More write-ups: <a href="run.html">A notebook inside a note</a> · <a href="glass.html">Refraction in CSS and SVG</a> · <a href="release.html">Shipping seven packages</a></p>
+<p class="more">More write-ups: <a href="run.html">A notebook inside a note</a> · <a href="glass.html">Refraction in CSS and SVG</a> · <a href="release.html">Shipping nine packages</a></p>
 </main>
 <footer><div class="wrap">
 <p>Made by Krishnan Adaikkappan. Every package is MIT-licensed and open source on <a href="https://github.com/krishnanefx">GitHub</a>.</p>
